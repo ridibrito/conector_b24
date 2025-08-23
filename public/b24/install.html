@@ -1,0 +1,19 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Bitrix24 App Install</title>
+    <script src="https://api.bitrix24.com/api/v1/"></script>
+  </head>
+  <body>
+    <p>Finalizando instalação…</p>
+    <script>
+      // Quando abrir dentro do Bitrix24, finaliza a instalação
+      if (window.BX24 && BX24.init) {
+        BX24.init(function () {
+          try { BX24.installFinish(); } catch(e) { console.log(e); }
+        });
+      }
+    </script>
+  </body>
+</html>
