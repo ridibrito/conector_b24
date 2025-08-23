@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-async function b24Call(clientEndpoint: string, accessToken: string, method: string, params: Record<string, any>) {
+async function b24Call(clientEndpoint: string, accessToken: string, method: string, params: Record<string, unknown>) {
   const url = `${clientEndpoint}${method}`;
   const form = new URLSearchParams({ auth: accessToken });
   for (const [k, v] of Object.entries(params)) form.append(k, typeof v === "string" ? v : JSON.stringify(v));
@@ -28,7 +28,8 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json({ ok: true, connectorId, handler });
-  } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e.message }, { status: 500 });
+  } catch (e: unknown) {
+    const errorMessage = e instanceof Error ? e.message : 'Erro desconhecido';
+    return NextResponse.json({ ok: false, error: errorMessage }, { status: 500 });
   }
 }
