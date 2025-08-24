@@ -3,336 +3,204 @@
 import { useEffect, useRef, useState } from 'react'
 import Image from 'next/image'
 
-declare global { 
-  interface Window { 
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
+
+declare global {
+  interface Window {
     BX24: {
-      init: (callback: () => void) => void
-      callMethod: (method: string, params: Record<string, unknown>, callback: (res: { data?: () => unknown; error?: () => unknown }) => void) => void
-      resizeWindow: (width: number, height: number) => void
+      init: (cb: () => void) => void
+      callMethod: (m: string, p: Record<string, any>, cb: (r: any) => void) => void
+      resizeWindow: (w: number, h: number) => void
     }
-  } 
+  }
 }
 
 const CONNECTOR_ID = 'EVOLUTION_CUSTOM'
-const FALLBACK_LINE = 1
 
-interface EvolutionSettings {
-  apiKey: string
-  subjectId: string
-  evolutionUrl: string
-  webhookUrl: string
-}
+type Line = { ID: number; NAME?: string }
+type EvoSettings = { apiKey: string; subjectId: string; evolutionUrl: string; webhookUrl: string }
 
 export default function SettingsPage() {
-  const [ready, setReady] = useState(false)
-  const [lineId, setLineId] = useState<number>(FALLBACK_LINE)
-  const [status, setStatus] = useState<'unknown'|'connected'|'disconnected'>('unknown')
+  const [ready, setReady]   = useState(false)
   const [loading, setLoading] = useState(false)
-  const [log, setLog] = useState<string[]>([])
-  const inited = useRef(false)
+  const [status, setStatus] = useState<'unknown'|'connected'|'disconnected'>('unknown')
+  const [lines, setLines]   = useState<Line[]>([{ ID: 1, NAME: 'Linha 1' }])
+  const [lineId, setLineId] = useState<number>(1)
+  const [log, setLog]       = useState<string[]>([])
+  const once = useRef(false)
 
-  // Evolution Settings
-  const [evolutionSettings, setEvolutionSettings] = useState<EvolutionSettings>({
-    apiKey: '',
-    subjectId: '',
-    evolutionUrl: '',
-    webhookUrl: ''
-  })
-  const [isSaving, setIsSaving] = useState(false)
-  const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'error'>('idle')
+  const [evo, setEvo] = useState<EvoSettings>({ apiKey:'', subjectId:'', evolutionUrl:'', webhookUrl:'' })
+  const [saving, setSaving] = useState(false)
+  const [saveMsg, setSaveMsg] = useState<'idle'|'ok'|'err'>('idle')
 
   useEffect(() => {
-    if (inited.current) return
-    inited.current = true
+    if (once.current) return
+    once.current = true
 
-    // Carregar configurações da Evolution
-    loadEvolutionSettings()
+    loadEvo()
 
     const s = document.createElement('script')
     s.src = 'https://api.bitrix24.com/api/v1/'
     s.onload = () => {
       try {
-        window.BX24?.init(() => {
+        window.BX24?.init(async () => {
+          push('BX24 init OK')
           setReady(true)
-          checkStatus(FALLBACK_LINE)
-          try { window.BX24.resizeWindow(document.body.clientWidth, document.body.clientHeight) } catch {}
+          await loadLines()
+          await check(lineId)
+          safeResize()
         })
-      } catch (e) {
-        pushLog('Falha ao inicializar BX24: ' + (e as Error)?.message)
-      }
+      } catch (e:any) { push('Falha init BX24: '+e?.message) }
     }
-    s.onerror = () => pushLog('Não foi possível carregar o SDK do Bitrix (api/v1)')
+    s.onerror = () => push('Falha ao carregar SDK BX24 (api/v1)')
     document.head.appendChild(s)
   }, [])
 
-  // Carregar configurações da Evolution
-  const loadEvolutionSettings = async () => {
-    try {
-      const response = await fetch('/api/settings')
-      if (response.ok) {
-        const data = await response.json()
-        setEvolutionSettings({
-          apiKey: data.evolutionToken || '',
-          subjectId: data.subjectId || '',
-          evolutionUrl: data.evolutionUrl || '',
-          webhookUrl: data.webhookUrl || ''
-        })
-      }
-    } catch (error) {
-      pushLog('Erro ao carregar configurações: ' + (error as Error)?.message)
-    }
-  }
+  function push(m:string){ setLog(p => [m, ...p].slice(0,120)) }
+  function safeResize(){ try{ window.BX24?.resizeWindow(document.body.clientWidth, document.body.clientHeight) }catch{} }
 
-  // Salvar configurações da Evolution
-  const saveEvolutionSettings = async () => {
-    setIsSaving(true)
-    setSaveStatus('idle')
-    
-    try {
-      const response = await fetch('/api/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          evolutionToken: evolutionSettings.apiKey,
-          subjectId: evolutionSettings.subjectId,
-          evolutionUrl: evolutionSettings.evolutionUrl,
-          webhookUrl: evolutionSettings.webhookUrl
-        })
-      })
-
-      if (response.ok) {
-        setSaveStatus('success')
-        pushLog('Configurações salvas com sucesso')
-        setTimeout(() => setSaveStatus('idle'), 3000)
-      } else {
-        const error = await response.json()
-        throw new Error(error.error || 'Erro ao salvar')
-      }
-    } catch (error) {
-      console.error('Erro ao salvar:', error)
-      setSaveStatus('error')
-      pushLog('Erro ao salvar configurações: ' + (error as Error)?.message)
-    } finally {
-      setIsSaving(false)
-    }
-  }
-
-  // Testar conexão com Evolution
-  const testEvolutionConnection = async () => {
-    try {
-      pushLog('Testando conexão com Evolution API...')
-      const response = await fetch('/api/test-connection', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
-      })
-
-      const result = await response.json()
-      
-      if (result.success) {
-        pushLog('✅ Conexão com Evolution API: OK')
-      } else {
-        pushLog('❌ Conexão com Evolution API: ' + result.error)
-      }
-    } catch (error) {
-      pushLog('❌ Erro ao testar conexão: ' + (error as Error)?.message)
-    }
-  }
-
-  function pushLog(msg:string){ setLog(p => [msg, ...p].slice(0,80)) }
-
-  function call(method:string, params: Record<string, unknown> = {}): Promise<unknown> {
+  function call(method:string, params:Record<string,any> = {}): Promise<any> {
     return new Promise((resolve, reject) => {
       if (!window.BX24) return reject(new Error('BX24 indisponível'))
-      window.BX24.callMethod(method, params, (res: { data?: () => unknown; error?: () => unknown }) => {
-        const err = res?.error?.()
+      window.BX24.callMethod(method, params, (r:any) => {
+        const err = r?.error?.()
         if (err) {
-          const errObj = err as Record<string, unknown>
-          const txt = (errObj?.ex as Record<string, unknown>)?.error_description || 
-                      (errObj?.ex as Record<string, unknown>)?.error || 
-                      JSON.stringify(err)
-          pushLog(`${method} ERROR: ${txt}`)
-          reject(errObj?.ex || err)
+          const txt = err.ex?.error_description || err.ex?.error || JSON.stringify(err)
+          push(`${method} ERROR: ${txt}`)
+          reject(err.ex || err)
         } else {
-          pushLog(`${method} OK`)
-          resolve(res.data?.())
+          push(`${method} OK`)
+          resolve(r.data?.())
         }
       })
     })
   }
 
-  async function checkStatus(line:number) {
-    if (!ready) return
+  async function loadLines() {
+    try {
+      const data = await call('imopenlines.config.list.get', {})
+      const arr: Line[] = Array.isArray(data)
+        ? data.map((x:any)=>({ ID:Number(x?.ID ?? x?.id ?? 1), NAME:x?.CONFIG?.LINE_NAME || x?.NAME || `Linha ${x?.ID}` }))
+        : [{ ID:1, NAME:'Linha 1' }]
+      setLines(arr.length ? arr : [{ ID:1, NAME:'Linha 1' }])
+      setLineId(arr.length ? Number(arr[0].ID) : 1)
+      push(`Linhas carregadas: ${arr.length || 1}`)
+    } catch {
+      setLines([{ ID:1, NAME:'Linha 1' }]); setLineId(1)
+    }
+  }
+
+  async function check(line:number) {
     setStatus('unknown')
     try {
-      const d = await call('imconnector.status', { LINE: line, CONNECTOR: CONNECTOR_ID }) as Record<string, unknown>
-      const ok = !!(d?.STATUS) && !!(d?.CONFIGURED) && d?.ERROR === false
+      const d = await call('imconnector.status', { LINE: line, CONNECTOR: CONNECTOR_ID })
+      const ok = !!d?.STATUS && !!d?.CONFIGURED && d?.ERROR === false
       setStatus(ok ? 'connected' : 'disconnected')
     } catch { setStatus('disconnected') }
   }
 
-  async function doActivate() {
+  async function connect() {
     setLoading(true)
     try {
       await call('imconnector.activate', { LINE: lineId, CONNECTOR: CONNECTOR_ID, ACTIVE: 1 })
-      await checkStatus(lineId)
-    } finally {
-      setLoading(false)
-      try { window.BX24?.resizeWindow(document.body.clientWidth, document.body.clientHeight) } catch {}
-    }
+      await check(lineId)
+    } finally { setLoading(false); safeResize() }
   }
 
-  async function doDeactivate() {
+  async function disconnect() {
     setLoading(true)
     try {
       await call('imconnector.deactivate', { LINE: lineId, CONNECTOR: CONNECTOR_ID })
-      await checkStatus(lineId)
-    } finally {
-      setLoading(false)
-      try { window.BX24?.resizeWindow(document.body.clientWidth, document.body.clientHeight) } catch {}
-    }
+      await check(lineId)
+    } finally { setLoading(false); safeResize() }
+  }
+
+  // Settings (mantém seu MVP)
+  async function loadEvo(){
+    try {
+      const r = await fetch('/api/settings')
+      if (r.ok){ const d = await r.json(); setEvo({
+        apiKey: d.evolutionToken || '', subjectId: d.subjectId || '', evolutionUrl: d.evolutionUrl || '', webhookUrl: d.webhookUrl || ''
+      })}
+    } catch(e:any){ push('Erro ao carregar settings: '+e?.message) }
+  }
+  async function saveEvo(){
+    setSaving(true); setSaveMsg('idle')
+    try {
+      const r = await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+        evolutionToken: evo.apiKey, subjectId: evo.subjectId, evolutionUrl: evo.evolutionUrl, webhookUrl: evo.webhookUrl
+      })})
+      if(!r.ok) throw new Error((await r.json()).error || 'Falha ao salvar')
+      setSaveMsg('ok'); push('Configurações salvas'); setTimeout(()=>setSaveMsg('idle'),2500)
+    } catch(e:any){ setSaveMsg('err'); push('Erro ao salvar: '+e?.message) }
+    finally{ setSaving(false) }
   }
 
   return (
-    <div style={{ background:'#fff', padding:'20px', fontFamily:'system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial' }}>
-      {/* Header */}
-      <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:20 }}>
-        <Image src="/evo_logo.png" alt="Evotrix" width={40} height={40} style={{ borderRadius:8, objectFit:'contain' }}/>
+    <div style={wrap}>
+      <header style={hdr}>
+        <Image src="/evo_logo.png" alt="Evotrix" width={56} height={56} style={logo}/>
         <div>
-          <div style={{ fontSize:18, fontWeight:600, color:'#333' }}>Evolution WhatsApp</div>
-          <div style={{ fontSize:13, color:'#666' }}>Conecte sua Evolution API ao Bitrix24</div>
+          <div style={title}>Evotrix</div>
+          <div style={sub}>Conecte o conector a um Canal Aberto e salve suas chaves da Evolution.</div>
         </div>
-      </div>
+      </header>
 
-      {/* Configurações */}
-      <div style={{ display:'grid', gap:16 }}>
-        
-        {/* Campo 1: Chave da API */}
-        <div>
-          <label style={{ display:'block', fontWeight:600, marginBottom:6, color:'#333' }}>Chave da API</label>
-          <input 
-            type="password" 
-            value={evolutionSettings.apiKey}
-            onChange={e => setEvolutionSettings(prev => ({ ...prev, apiKey: e.target.value }))}
-            placeholder="Digite sua chave da Evolution API"
-            style={{ width:'100%', padding:'10px 12px', border:'1px solid #ddd', borderRadius:6, fontSize:14 }}
-          />
+      <section style={card}>
+        <label style={label}>Canal Aberto</label>
+        <div style={{display:'flex', gap:8}}>
+          <select value={lineId} onChange={e=>setLineId(Number(e.target.value))} disabled={!ready||loading} style={input}>
+            {lines.map(l=> <option key={l.ID} value={l.ID}>{l.NAME ?? `Linha ${l.ID}`} (ID {l.ID})</option>)}
+          </select>
+          <button onClick={()=>check(lineId)} disabled={!ready||loading} style={btn('#0ea5e9')}>Ver status</button>
         </div>
 
-        {/* Campo 2: Subject ID */}
-        <div>
-          <label style={{ display:'block', fontWeight:600, marginBottom:6, color:'#333' }}>Subject ID</label>
-          <input 
-            type="text" 
-            value={evolutionSettings.subjectId}
-            onChange={e => setEvolutionSettings(prev => ({ ...prev, subjectId: e.target.value }))}
-            placeholder="Um Subject ID para um Canal Aberto"
-            style={{ width:'100%', padding:'10px 12px', border:'1px solid #ddd', borderRadius:6, fontSize:14 }}
-          />
+        <div style={{display:'flex', alignItems:'center', gap:10}}>
+          <span>Status:</span>
+          <b style={{color: status==='connected' ? '#16a34a' : status==='unknown' ? '#6b7280' : '#ef4444'}}>
+            {status==='unknown' ? 'verificando…' : status==='connected' ? 'Conectado' : 'Desconectado'}
+          </b>
         </div>
 
-        {/* Campo 3: Canal Aberto */}
-        <div>
-          <label style={{ display:'block', fontWeight:600, marginBottom:6, color:'#333' }}>Canal Aberto</label>
-          <div style={{ display:'flex', gap:8, alignItems:'center' }}>
-            <select 
-              value={lineId}
-              onChange={e => setLineId(Number(e.target.value))}
-              style={{ flex:1, padding:'10px 12px', border:'1px solid #ddd', borderRadius:6, fontSize:14 }}
-            >
-              <option value={1}>Canal Aberto 1</option>
-              <option value={2}>Canal Aberto 2</option>
-              <option value={3}>Canal Aberto 3</option>
-            </select>
-            <button 
-              onClick={() => checkStatus(lineId)}
-              disabled={!ready || loading}
-              style={{ padding:'10px 16px', background:'#f0f0f0', border:'1px solid #ddd', borderRadius:6, fontSize:14, cursor:'pointer' }}
-            >
-              CONFIGURAR
-            </button>
-          </div>
+        <div style={{display:'flex', gap:12}}>
+          <button onClick={connect}    disabled={!ready||loading} style={btn('#16a34a')}>{loading?'Processando…':'Conectar'}</button>
+          <button onClick={disconnect} disabled={!ready||loading} style={btn('#ef4444')}>{loading?'Processando…':'Desconectar'}</button>
         </div>
+      </section>
 
-        {/* Status */}
-        <div style={{ display:'flex', alignItems:'center', gap:8, padding:12, background:'#f8f9fa', borderRadius:6 }}>
-          <span style={{ fontSize:14, color:'#666' }}>Status:</span>
-          <span style={{ 
-            fontSize:14, 
-            fontWeight:600,
-            color: status==='connected' ? '#28a745' : status==='unknown' ? '#6c757d' : '#dc3545' 
-          }}>
-            {status==='unknown' ? 'Verificando...' : status==='connected' ? 'Conectado' : 'Desconectado'}
-          </span>
+      <section style={card}>
+        <div style={{fontWeight:700}}>Evolution API (opcional no MVP)</div>
+        <label style={label}>Chave da API</label>
+        <input type="password" value={evo.apiKey} onChange={e=>setEvo({...evo, apiKey:e.target.value})} placeholder="Chave..." style={input}/>
+        <label style={label}>Subject ID</label>
+        <input value={evo.subjectId} onChange={e=>setEvo({...evo, subjectId:e.target.value})} placeholder="Subject ID..." style={input}/>
+        <label style={label}>Evolution URL</label>
+        <input value={evo.evolutionUrl} onChange={e=>setEvo({...evo, evolutionUrl:e.target.value})} placeholder="https://..." style={input}/>
+        <label style={label}>Webhook URL</label>
+        <input value={evo.webhookUrl} onChange={e=>setEvo({...evo, webhookUrl:e.target.value})} placeholder="https://..." style={input}/>
+        <div style={{display:'flex', gap:12}}>
+          <button onClick={saveEvo} disabled={saving} style={btn('#2563eb')}>{saving?'Salvando…':'Salvar'}</button>
+          {saveMsg==='ok' && <span style={{color:'#16a34a'}}>Salvo!</span>}
+          {saveMsg==='err'&& <span style={{color:'#ef4444'}}>Erro ao salvar</span>}
         </div>
+      </section>
 
-        {/* Botões de Ação */}
-        <div style={{ display:'flex', gap:12 }}>
-          <button 
-            onClick={doActivate} 
-            disabled={!ready || loading || !evolutionSettings.apiKey}
-            style={{ 
-              flex:1,
-              padding:'12px 20px', 
-              background: (!ready || loading || !evolutionSettings.apiKey) ? '#e9ecef' : '#28a745',
-              color: (!ready || loading || !evolutionSettings.apiKey) ? '#6c757d' : '#fff',
-              border:'none', 
-              borderRadius:6, 
-              fontSize:14, 
-              fontWeight:600,
-              cursor: (!ready || loading || !evolutionSettings.apiKey) ? 'not-allowed' : 'pointer'
-            }}
-          >
-            {loading ? 'Processando...' : 'CONECTAR'}
-          </button>
-          
-          <button 
-            onClick={saveEvolutionSettings} 
-            disabled={isSaving}
-            style={{ 
-              padding:'12px 20px', 
-              background: isSaving ? '#e9ecef' : '#007bff',
-              color: isSaving ? '#6c757d' : '#fff',
-              border:'none', 
-              borderRadius:6, 
-              fontSize:14, 
-              fontWeight:600,
-              cursor: isSaving ? 'not-allowed' : 'pointer'
-            }}
-          >
-            {isSaving ? 'Salvando...' : 'SALVAR'}
-          </button>
-        </div>
-
-        {/* Mensagens de Status */}
-        {saveStatus === 'success' && (
-          <div style={{ padding:12, background:'#d4edda', border:'1px solid #c3e6cb', borderRadius:6, color:'#155724', fontSize:14 }}>
-            ✅ Configurações salvas com sucesso!
-          </div>
-        )}
-        
-        {saveStatus === 'error' && (
-          <div style={{ padding:12, background:'#f8d7da', border:'1px solid #f5c6cb', borderRadius:6, color:'#721c24', fontSize:14 }}>
-            ❌ Erro ao salvar configurações
-          </div>
-        )}
-
-        {/* Log */}
-        <div style={{ marginTop:16 }}>
-          <div style={{ fontWeight:600, marginBottom:8, color:'#333' }}>Log de Atividades</div>
-          <pre style={{ 
-            background:'#f8f9fa', 
-            color:'#333', 
-            padding:12, 
-            borderRadius:6, 
-            maxHeight:120, 
-            overflow:'auto', 
-            fontSize:12,
-            border:'1px solid #e9ecef'
-          }}>
-{log.map(l => `• ${l}\n`)}
-          </pre>
-        </div>
-      </div>
+      <section style={{marginTop:16}}>
+        <div style={{fontWeight:700, marginBottom:6}}>Log</div>
+        <pre style={logbox}>{log.map(l=>`• ${l}\n`)}</pre>
+      </section>
     </div>
   )
 }
+
+const wrap:  React.CSSProperties = { background:'#fff', padding:24, border:'1px solid #e5e7eb', borderRadius:12, fontFamily:'system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial' }
+const hdr:   React.CSSProperties = { display:'flex', gap:16, alignItems:'center', marginBottom:16 }
+const title: React.CSSProperties = { fontSize:20, fontWeight:700 }
+const sub:   React.CSSProperties = { color:'#6b7280' }
+const card:  React.CSSProperties = { display:'grid', gap:10, marginBottom:14 }
+const label: React.CSSProperties = { fontWeight:600 }
+const input: React.CSSProperties = { width:360, padding:'9px 11px', border:'1px solid #e5e7eb', borderRadius:8 }
+const logo:  React.CSSProperties = { borderRadius:12, objectFit:'contain', background:'#fff', border:'1px solid #e5e7eb' }
+const logbox:React.CSSProperties = { background:'#0f172a', color:'#e5e7eb', padding:12, borderRadius:8, maxHeight:220, overflow:'auto' }
+function btn(bg:string): React.CSSProperties { return { background:bg, color:'#fff', padding:'9px 14px', borderRadius:8, border:'none', cursor:'pointer', fontWeight:600 } }
