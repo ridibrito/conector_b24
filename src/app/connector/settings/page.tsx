@@ -110,7 +110,7 @@ export default function SettingsPage() {
       <header style={{ display:'flex', gap:16, alignItems:'center' }}>
         <div style={{ width:56, height:56, borderRadius:28, background:'#25D366', color:'#fff', display:'grid', placeItems:'center', fontWeight:700 }}>WA</div>
         <div>
-          <div style={{ fontSize:20, fontWeight:700 }}>Evolution WhatsApp</div>
+          <div style={{ fontSize:20, fontWeight:700 }}>Evotrix</div>
           <div style={{ color:'#6b7280' }}>Ative/desative o conector em uma Linha (Canal Aberto) específica.</div>
         </div>
       </header>
