@@ -8,9 +8,14 @@ export async function POST(req: NextRequest) {
   
   console.log("[B24 CALLBACK]", body);
   
-  // Se for uma instalação, redireciona para a página de sucesso
+  // Se for uma instalação, redireciona para a página de configuração do conector
   if (body.event === 'ONAPPINSTALL') {
-    return NextResponse.redirect(new URL('/install/success', req.url));
+    return NextResponse.redirect(new URL('/connector/settings', req.url));
+  }
+  
+  // Se for uma desinstalação, redireciona para a página de instalação
+  if (body.event === 'ONAPPUNINSTALL') {
+    return NextResponse.redirect(new URL('/install', req.url));
   }
   
   // Salva os tokens no Supabase (implementação futura)
