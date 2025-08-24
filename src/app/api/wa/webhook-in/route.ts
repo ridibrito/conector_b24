@@ -1,99 +1,220 @@
 import { NextRequest, NextResponse } from 'next/server'
 
-export const runtime = 'nodejs'
-export const dynamic = 'force-dynamic'
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
-// cache em memória (vive dentro do pod)
-// eslint-disable-next-line prefer-const
-let cachedAuth: { access_token?: string; expires_at?: number; refresh_token?: string; endpoint?: string } = {}
-
-async function refreshToken() {
-  const client_id = process.env.B24_CLIENT_ID!
-  const client_secret = process.env.B24_CLIENT_SECRET!
-  const refresh_token = cachedAuth.refresh_token || process.env.B24_REFRESH_TOKEN!
-  const url = `https://oauth.bitrix.info/oauth/token/?grant_type=refresh_token&client_id=${encodeURIComponent(client_id)}&client_secret=${encodeURIComponent(client_secret)}&refresh_token=${encodeURIComponent(refresh_token)}`
-  const resp = await fetch(url, { method: 'GET', cache: 'no-store' })
-  const data = await resp.json()
-  if (!resp.ok || !data.access_token) throw new Error(`REFRESH_FAIL: ${resp.status} ${JSON.stringify(data)}`)
-  cachedAuth.access_token = data.access_token
-  cachedAuth.refresh_token = data.refresh_token || refresh_token
-  cachedAuth.endpoint = data.client_endpoint || process.env.B24_ENDPOINT
-  cachedAuth.expires_at = Math.floor(Date.now()/1000) + (data.expires_in ?? 3600) - 60
-  return cachedAuth
-}
-function needRefresh() {
-  if (!cachedAuth.access_token) return true
-  const now = Math.floor(Date.now()/1000)
-  return !cachedAuth.expires_at || cachedAuth.expires_at <= now
-}
-async function sendToBitrix(params: URLSearchParams) {
-  const base = (cachedAuth.endpoint || process.env.B24_ENDPOINT || '').trim()
-  const endpoint = base.endsWith('/') ? base : base + '/'
-  const url = endpoint + 'imconnector.send.messages'
-  const resp = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: params,
-    cache: 'no-store',
-  })
-  const raw = await resp.text()
-  let data: Record<string, unknown>; try { data = JSON.parse(raw) } catch { data = { raw } }
-  return { ok: resp.ok, status: resp.status, data }
+type Inbound = {
+  from: string
+  chatId: string
+  text: string
+  messageId: string
+  timestamp: number
+  lineId?: number
 }
 
-        export async function POST(req: NextRequest) {
-          try {
-            const body = await req.json().catch(() => ({}))
-            const from = body.from || body.userId || 'wa-unknown'
-            const chatId = body.chatId || from
-            const text: string | undefined = body.text
-            const mediaUrl: string | undefined = body.mediaUrl
-            const messageId: string = body.messageId || (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}`)
-            const ts: number = Number.isFinite(body.timestamp) ? body.timestamp : Math.floor(Date.now() / 1000)
+function onlyDigits(s: string) {
+  return (s || '').replace(/\D+/g, '')
+}
 
-            // Permite override da LINE via payload
-            const lineFromBody = Number.isFinite(body.lineId) ? Number(body.lineId) : undefined
-            const B24_ENDPOINT = process.env.B24_ENDPOINT
-            const B24_LINE_ID = Number(process.env.B24_LINE_ID || '1')
-            const lineToUse = lineFromBody || B24_LINE_ID
-            const CONNECTOR_SEND_ID = process.env.CONNECTOR_SEND_ID || 'evolution_custom'
-            const clientId = process.env.B24_CLIENT_ID
-            const clientSecret = process.env.B24_CLIENT_SECRET
-            const refreshEnv = process.env.B24_REFRESH_TOKEN
+function unixNow() {
+  return Math.floor(Date.now() / 1000)
+}
 
-                const missing: string[] = []
-            if (!B24_ENDPOINT) missing.push('B24_ENDPOINT')
-            if (!lineToUse) missing.push('B24_LINE_ID')
-            if (!CONNECTOR_SEND_ID) missing.push('CONNECTOR_SEND_ID')
-            if (!clientId) missing.push('B24_CLIENT_ID')
-            if (!clientSecret) missing.push('B24_CLIENT_SECRET')
-            if (!refreshEnv && !cachedAuth.refresh_token) missing.push('B24_REFRESH_TOKEN')
-            if (missing.length) return NextResponse.json({ ok: false, error: 'MISSING_ENV', missing }, { status: 500 })
-            if (!text && !mediaUrl) return NextResponse.json({ ok: false, error: 'NO_CONTENT', hint: 'Envie text ou mediaUrl' }, { status: 400 })
+// ------------ Parsers --------------
 
-            if (needRefresh()) await refreshToken()
-
-            const params = new URLSearchParams()
-            params.set('auth', cachedAuth.access_token!)
-            params.set('CONNECTOR', CONNECTOR_SEND_ID)
-            params.set('LINE', String(lineToUse))
-            params.set('MESSAGES[0][user][id]', from)
-            params.set('MESSAGES[0][chat][id]', chatId)
-            params.set('MESSAGES[0][message][id]', messageId)
-            params.set('MESSAGES[0][message][date]', String(ts))
-            if (text) params.set('MESSAGES[0][message][text]', text)
-            if (!text && mediaUrl) params.set('MESSAGES[0][message][files][0][url]', mediaUrl)
-
-    let res = await sendToBitrix(params)
-    const expired = (!res.ok && (res.status === 401 || res.data?.error === 'expired_token'))
-    if (expired) {
-      await refreshToken()
-      params.set('auth', cachedAuth.access_token!)
-      res = await sendToBitrix(params)
-    }
-    if (!res.ok) return NextResponse.json({ ok: false, error: 'B24_ERROR', status: res.status, data: res.data }, { status: 502 })
-    return NextResponse.json({ ok: true, b24: res.data })
-  } catch (e: unknown) {
-    return NextResponse.json({ ok: false, error: e instanceof Error ? e.message : 'UNKNOWN' }, { status: 500 })
+// 1) Nosso formato "simples"
+function parseSimple(body: any): Inbound | null {
+  if (!body) return null
+  if (!body.from || !(body.text || body.caption)) return null
+  const ts = Number(body.timestamp ?? unixNow())
+  return {
+    from: body.from,
+    chatId: body.chatId || `wa-chat-${onlyDigits(String(body.from))}`,
+    text: String(body.text ?? body.caption ?? ''),
+    messageId: String(body.messageId ?? `msg-${Date.now()}`),
+    timestamp: isNaN(ts) ? unixNow() : ts,
+    lineId: body.lineId ? Number(body.lineId) : undefined,
   }
+}
+
+// 2) Evolution API (messages.upsert / message_upsert)
+function extractTextFromMessage(msg: any): string | null {
+  if (!msg) return null
+  const m = msg.message ?? msg
+  return (
+    m?.conversation ??
+    m?.extendedTextMessage?.text ??
+    m?.imageMessage?.caption ??
+    m?.videoMessage?.caption ??
+    m?.documentMessage?.caption ??
+    m?.buttonsResponseMessage?.selectedDisplayText ??
+    m?.templateButtonReplyMessage?.selectedId ??
+    null
+  )
+}
+
+function parseEvolution(body: any): Inbound | null {
+  if (!body) return null
+
+  // Sinais típicos
+  const isUpsert =
+    String(body?.event || body?.type || '').toLowerCase().includes('message') ||
+    body?.data?.messages ||
+    body?.messages
+
+  if (!isUpsert) return null
+
+  // Pega o primeiro "message" onde geralmente está a carga útil
+  const candidate =
+    body?.data?.messages?.[0] ??
+    body?.messages?.[0] ??
+    body?.data ??
+    body?.message ??
+    null
+
+  if (!candidate) return null
+
+  // remoteJid: "5511999999999@s.whatsapp.net" | "xxxx@g.us"
+  const remoteJid =
+    candidate?.key?.remoteJid ??
+    candidate?.remoteJid ??
+    body?.remoteJid ??
+    null
+  if (!remoteJid) return null
+
+  const isGroup = String(remoteJid).includes('@g.us')
+  const bare = onlyDigits(String(remoteJid))
+  const numberId = bare || String(remoteJid).split('@')[0]
+  const from = `wa-${numberId}`
+  const chatId = isGroup ? `wa-chat-${numberId}` : `wa-chat-${numberId}`
+
+  const messageId =
+    candidate?.key?.id ??
+    candidate?.id ??
+    body?.messageId ??
+    `msg-${Date.now()}`
+
+  const timestamp =
+    Number(candidate?.messageTimestamp ?? candidate?.timestamp ?? body?.timestamp ?? unixNow()) ||
+    unixNow()
+
+  const text =
+    extractTextFromMessage(candidate) ??
+    extractTextFromMessage(candidate?.messages?.[0]) ??
+    extractTextFromMessage(body) ??
+    '(mensagem recebida)'
+
+  const lineId =
+    Number(body?.lineId ?? body?.LINE ?? body?.data?.lineId ?? body?.data?.LINE) || undefined
+
+  return {
+    from,
+    chatId,
+    text: String(text),
+    messageId: String(messageId),
+    timestamp,
+    lineId,
+  }
+}
+
+// ------------ Bitrix --------------
+
+async function getAuth(): Promise<string> {
+  const token = process.env.B24_TOKEN
+  if (token) return token
+
+  // Auto-refresh, se credenciais estiverem configuradas
+  const cid = process.env.B24_CLIENT_ID
+  const cs  = process.env.B24_CLIENT_SECRET
+  const rt  = process.env.B24_REFRESH_TOKEN
+
+  if (!cid || !cs || !rt) {
+    throw new Error('B24 auth ausente (B24_TOKEN) e sem credenciais de refresh')
+  }
+
+  const url = `https://oauth.bitrix.info/oauth/token/?grant_type=refresh_token&client_id=${cid}&client_secret=${cs}&refresh_token=${rt}`
+  const r = await fetch(url)
+  const j = await r.json().catch(() => ({}))
+  if (!j?.access_token) throw new Error('Falha no refresh OAuth do Bitrix')
+  // Opcional: cache em variável global para a vida da request
+  ;(globalThis as any).__B24_TOKEN = j.access_token
+  return j.access_token
+}
+
+async function sendToBitrix(inb: Inbound) {
+  const endpoint = process.env.B24_ENDPOINT || ''
+  const line     = String(inb.lineId ?? process.env.B24_LINE_ID ?? '1')
+  const connector = String(process.env.CONNECTOR_SEND_ID || 'evolution_custom').toLowerCase()
+
+  if (!endpoint.endsWith('/')) {
+    throw new Error('B24_ENDPOINT deve terminar com / (ex.: https://SEU.bitrix24.com.br/rest/ )')
+  }
+
+  const auth = await getAuth()
+  const form = new URLSearchParams()
+  form.set('auth', auth)
+  form.set('CONNECTOR', connector)
+  form.set('LINE', line)
+  form.set('MESSAGES[0][user][id]', inb.from)
+  form.set('MESSAGES[0][chat][id]', inb.chatId)
+  form.set('MESSAGES[0][message][id]', inb.messageId)
+  form.set('MESSAGES[0][message][date]', String(inb.timestamp))
+  form.set('MESSAGES[0][message][text]', inb.text || '')
+
+  const url = endpoint + 'imconnector.send.messages'
+  let resp = await fetch(url, { method: 'POST', body: form })
+  let json: any = await resp.json().catch(() => ({}))
+
+  // Se expirou e temos credenciais, tenta 1 refresh
+  if (resp.status === 401 || json?.error === 'expired_token') {
+    ;(globalThis as any).__B24_TOKEN = undefined
+    const auth2 = await getAuth()
+    form.set('auth', auth2)
+    resp = await fetch(url, { method: 'POST', body: form })
+    json = await resp.json().catch(() => ({}))
+  }
+
+  return { status: resp.status, json }
+}
+
+// ------------ Handler -------------
+
+export async function POST(req: NextRequest) {
+  // Token opcional de segurança (defina EVOLUTION_WEBHOOK_TOKEN no Vercel e use header X-Webhook-Token no Manager)
+  const requiredToken = process.env.EVOLUTION_WEBHOOK_TOKEN
+  const got = req.headers.get('x-webhook-token')
+  if (requiredToken && got !== requiredToken) {
+    return NextResponse.json({ ok: false, error: 'UNAUTHORIZED_WEBHOOK' }, { status: 401 })
+  }
+
+  let body: any = null
+  try {
+    body = await req.json()
+  } catch {
+    // tenta application/x-www-form-urlencoded
+    const text = await req.text().catch(() => '')
+    try {
+      body = JSON.parse(text)
+    } catch {
+      const params = new URLSearchParams(text)
+      body = Object.fromEntries(params.entries())
+    }
+  }
+
+  // Tenta ambos parsers
+  const inbound = parseSimple(body) || parseEvolution(body)
+  if (!inbound) {
+    return NextResponse.json({ ok: false, error: 'UNSUPPORTED_PAYLOAD', body }, { status: 200 })
+  }
+
+  try {
+    const b24 = await sendToBitrix(inbound)
+    return NextResponse.json({ ok: true, inbound, b24 })
+  } catch (e: any) {
+    return NextResponse.json({ ok: false, error: 'B24_ERROR', detail: e?.message ?? String(e) }, { status: 502 })
+  }
+}
+
+// Saúde do endpoint
+export async function GET() {
+  return NextResponse.json({ ok: true, handler: 'wa/webhook-in' })
 }
