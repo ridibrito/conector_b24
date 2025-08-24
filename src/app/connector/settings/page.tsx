@@ -6,7 +6,13 @@ import { useEffect, useMemo, useState } from 'react'
 // Tipos mínimos para BX24
 declare global {
   interface Window {
-    BX24: any
+    BX24: {
+      init: (callback: () => void) => void;
+      getAuth: () => Record<string, unknown>;
+      getDomain: () => string;
+      callMethod: (method: string, params: Record<string, unknown>, callback: (res: { data?: () => unknown; answer?: { result: unknown } }) => void) => void;
+      resizeWindow: (width: number, height: number) => void;
+    }
   }
 }
 
@@ -32,7 +38,7 @@ function LabelValue({ label, value, copy = true }: { label: string; value: strin
 export default function ConnectorSettings() {
   const [bxReady, setBxReady] = useState(false)
   const [installed, setInstalled] = useState<null | boolean>(null)
-  const [auth, setAuth] = useState<any>(null)
+  const [auth, setAuth] = useState<Record<string, unknown> | null>(null)
   const [domain, setDomain] = useState<string>('')
   const [lineId, setLineId] = useState<string>('1')
   const connectorId = 'EVOLUTION_CUSTOM' // para registro
@@ -66,9 +72,9 @@ export default function ConnectorSettings() {
           if (d) setDomain(d)
         } catch {}
         try {
-          window.BX24.callMethod('app.info', {}, (res: any) => {
-            const r = res?.data?.() || res?.answer?.result
-            setInstalled(Boolean(r?.INSTALLED))
+          window.BX24.callMethod('app.info', {}, (res: { data?: () => unknown; answer?: { result: unknown } }) => {
+                          const r = (res?.data?.() || res?.answer?.result) as Record<string, unknown>
+              setInstalled(Boolean(r?.INSTALLED))
           })
         } catch {}
       })
@@ -167,7 +173,7 @@ export default function ConnectorSettings() {
         </section>
 
         <footer className="mt-6 text-xs text-gray-500">
-          <p>Portal detectado: {domain || '—'} | Member ID: {auth?.member_id || '—'}</p>
+          <p>Portal detectado: {domain || '—'} | Member ID: {String(auth?.member_id || '—')}</p>
         </footer>
       </div>
     </main>
