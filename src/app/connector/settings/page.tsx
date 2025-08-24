@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import Image from 'next/image'
 
 declare global { 
   interface Window { 
@@ -15,6 +16,13 @@ declare global {
 const CONNECTOR_ID = 'EVOLUTION_CUSTOM'
 const FALLBACK_LINE = 1
 
+interface EvolutionSettings {
+  apiKey: string
+  subjectId: string
+  evolutionUrl: string
+  webhookUrl: string
+}
+
 export default function SettingsPage() {
   const [ready, setReady] = useState(false)
   const [lineId, setLineId] = useState<number>(FALLBACK_LINE)
@@ -23,9 +31,22 @@ export default function SettingsPage() {
   const [log, setLog] = useState<string[]>([])
   const inited = useRef(false)
 
+  // Evolution Settings
+  const [evolutionSettings, setEvolutionSettings] = useState<EvolutionSettings>({
+    apiKey: '',
+    subjectId: '',
+    evolutionUrl: '',
+    webhookUrl: ''
+  })
+  const [isSaving, setIsSaving] = useState(false)
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'error'>('idle')
+
   useEffect(() => {
     if (inited.current) return
     inited.current = true
+
+    // Carregar configurações da Evolution
+    loadEvolutionSettings()
 
     const s = document.createElement('script')
     s.src = 'https://api.bitrix24.com/api/v1/'
@@ -43,6 +64,79 @@ export default function SettingsPage() {
     s.onerror = () => pushLog('Não foi possível carregar o SDK do Bitrix (api/v1)')
     document.head.appendChild(s)
   }, [])
+
+  // Carregar configurações da Evolution
+  const loadEvolutionSettings = async () => {
+    try {
+      const response = await fetch('/api/settings')
+      if (response.ok) {
+        const data = await response.json()
+        setEvolutionSettings({
+          apiKey: data.evolutionToken || '',
+          subjectId: data.subjectId || '',
+          evolutionUrl: data.evolutionUrl || '',
+          webhookUrl: data.webhookUrl || ''
+        })
+      }
+    } catch (error) {
+      pushLog('Erro ao carregar configurações: ' + (error as Error)?.message)
+    }
+  }
+
+  // Salvar configurações da Evolution
+  const saveEvolutionSettings = async () => {
+    setIsSaving(true)
+    setSaveStatus('idle')
+    
+    try {
+      const response = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          evolutionToken: evolutionSettings.apiKey,
+          subjectId: evolutionSettings.subjectId,
+          evolutionUrl: evolutionSettings.evolutionUrl,
+          webhookUrl: evolutionSettings.webhookUrl
+        })
+      })
+
+      if (response.ok) {
+        setSaveStatus('success')
+        pushLog('Configurações salvas com sucesso')
+        setTimeout(() => setSaveStatus('idle'), 3000)
+      } else {
+        const error = await response.json()
+        throw new Error(error.error || 'Erro ao salvar')
+      }
+    } catch (error) {
+      console.error('Erro ao salvar:', error)
+      setSaveStatus('error')
+      pushLog('Erro ao salvar configurações: ' + (error as Error)?.message)
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  // Testar conexão com Evolution
+  const testEvolutionConnection = async () => {
+    try {
+      pushLog('Testando conexão com Evolution API...')
+      const response = await fetch('/api/test-connection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      })
+
+      const result = await response.json()
+      
+      if (result.success) {
+        pushLog('✅ Conexão com Evolution API: OK')
+      } else {
+        pushLog('❌ Conexão com Evolution API: ' + result.error)
+      }
+    } catch (error) {
+      pushLog('❌ Erro ao testar conexão: ' + (error as Error)?.message)
+    }
+  }
 
   function pushLog(msg:string){ setLog(p => [msg, ...p].slice(0,80)) }
 
@@ -99,45 +193,146 @@ export default function SettingsPage() {
   }
 
   return (
-    <div style={{ background:'#fff', padding:'24px', border:'1px solid #e5e7eb', borderRadius:12, fontFamily:'system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial' }}>
-      <header style={{ display:'flex', gap:16, alignItems:'center', marginBottom:16 }}>
-        <img src="/evo_logo.png" alt="Evotrix" width={56} height={56} style={{ borderRadius:12, objectFit:'contain', background:'#fff', border:'1px solid #e5e7eb' }}/>
+    <div style={{ background:'#fff', padding:'20px', fontFamily:'system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial' }}>
+      {/* Header */}
+      <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:20 }}>
+        <Image src="/evo_logo.png" alt="Evotrix" width={40} height={40} style={{ borderRadius:8, objectFit:'contain' }}/>
         <div>
-          <div style={{ fontSize:20, fontWeight:700 }}>Evotrix</div>
-          <div style={{ color:'#6b7280' }}>Conecte este conector a uma Linha (Canal Aberto) específica do Bitrix24.</div>
+          <div style={{ fontSize:18, fontWeight:600, color:'#333' }}>Evolution WhatsApp</div>
+          <div style={{ fontSize:13, color:'#666' }}>Conecte sua Evolution API ao Bitrix24</div>
         </div>
-      </header>
+      </div>
 
-      <section style={{ display:'grid', gap:12, marginBottom:16 }}>
-        <label style={{ fontWeight:600 }}>ID do Canal Aberto (LINE)</label>
-        <input type="number" min={1} value={lineId}
-          onChange={e => setLineId(Number(e.target.value))}
-          disabled={!ready || loading}
-          style={{ width:220, padding:'8px 10px', border:'1px solid #e5e7eb', borderRadius:8 }}
-        />
-        <div style={{ display:'flex', gap:10, alignItems:'center' }}>
-          <span>Status:</span>
-          <b style={{ color: status==='connected' ? '#16a34a' : status==='unknown' ? '#6b7280' : '#ef4444' }}>
-            {status==='unknown' ? 'verificando…' : status==='connected' ? 'Conectado' : 'Desconectado'}
-          </b>
-          <button onClick={()=>checkStatus(lineId)} disabled={!ready || loading} style={btn('#0ea5e9')}>Atualizar status</button>
+      {/* Configurações */}
+      <div style={{ display:'grid', gap:16 }}>
+        
+        {/* Campo 1: Chave da API */}
+        <div>
+          <label style={{ display:'block', fontWeight:600, marginBottom:6, color:'#333' }}>Chave da API</label>
+          <input 
+            type="password" 
+            value={evolutionSettings.apiKey}
+            onChange={e => setEvolutionSettings(prev => ({ ...prev, apiKey: e.target.value }))}
+            placeholder="Digite sua chave da Evolution API"
+            style={{ width:'100%', padding:'10px 12px', border:'1px solid #ddd', borderRadius:6, fontSize:14 }}
+          />
         </div>
+
+        {/* Campo 2: Subject ID */}
+        <div>
+          <label style={{ display:'block', fontWeight:600, marginBottom:6, color:'#333' }}>Subject ID</label>
+          <input 
+            type="text" 
+            value={evolutionSettings.subjectId}
+            onChange={e => setEvolutionSettings(prev => ({ ...prev, subjectId: e.target.value }))}
+            placeholder="Um Subject ID para um Canal Aberto"
+            style={{ width:'100%', padding:'10px 12px', border:'1px solid #ddd', borderRadius:6, fontSize:14 }}
+          />
+        </div>
+
+        {/* Campo 3: Canal Aberto */}
+        <div>
+          <label style={{ display:'block', fontWeight:600, marginBottom:6, color:'#333' }}>Canal Aberto</label>
+          <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+            <select 
+              value={lineId}
+              onChange={e => setLineId(Number(e.target.value))}
+              style={{ flex:1, padding:'10px 12px', border:'1px solid #ddd', borderRadius:6, fontSize:14 }}
+            >
+              <option value={1}>Canal Aberto 1</option>
+              <option value={2}>Canal Aberto 2</option>
+              <option value={3}>Canal Aberto 3</option>
+            </select>
+            <button 
+              onClick={() => checkStatus(lineId)}
+              disabled={!ready || loading}
+              style={{ padding:'10px 16px', background:'#f0f0f0', border:'1px solid #ddd', borderRadius:6, fontSize:14, cursor:'pointer' }}
+            >
+              CONFIGURAR
+            </button>
+          </div>
+        </div>
+
+        {/* Status */}
+        <div style={{ display:'flex', alignItems:'center', gap:8, padding:12, background:'#f8f9fa', borderRadius:6 }}>
+          <span style={{ fontSize:14, color:'#666' }}>Status:</span>
+          <span style={{ 
+            fontSize:14, 
+            fontWeight:600,
+            color: status==='connected' ? '#28a745' : status==='unknown' ? '#6c757d' : '#dc3545' 
+          }}>
+            {status==='unknown' ? 'Verificando...' : status==='connected' ? 'Conectado' : 'Desconectado'}
+          </span>
+        </div>
+
+        {/* Botões de Ação */}
         <div style={{ display:'flex', gap:12 }}>
-          <button onClick={doActivate} disabled={!ready || loading} style={btn('#16a34a')}>{loading?'Processando…':'Conectar nesta linha'}</button>
-          <button onClick={doDeactivate} disabled={!ready || loading} style={btn('#ef4444')}>{loading?'Processando…':'Desconectar desta linha'}</button>
+          <button 
+            onClick={doActivate} 
+            disabled={!ready || loading || !evolutionSettings.apiKey}
+            style={{ 
+              flex:1,
+              padding:'12px 20px', 
+              background: (!ready || loading || !evolutionSettings.apiKey) ? '#e9ecef' : '#28a745',
+              color: (!ready || loading || !evolutionSettings.apiKey) ? '#6c757d' : '#fff',
+              border:'none', 
+              borderRadius:6, 
+              fontSize:14, 
+              fontWeight:600,
+              cursor: (!ready || loading || !evolutionSettings.apiKey) ? 'not-allowed' : 'pointer'
+            }}
+          >
+            {loading ? 'Processando...' : 'CONECTAR'}
+          </button>
+          
+          <button 
+            onClick={saveEvolutionSettings} 
+            disabled={isSaving}
+            style={{ 
+              padding:'12px 20px', 
+              background: isSaving ? '#e9ecef' : '#007bff',
+              color: isSaving ? '#6c757d' : '#fff',
+              border:'none', 
+              borderRadius:6, 
+              fontSize:14, 
+              fontWeight:600,
+              cursor: isSaving ? 'not-allowed' : 'pointer'
+            }}
+          >
+            {isSaving ? 'Salvando...' : 'SALVAR'}
+          </button>
         </div>
-      </section>
 
-      <section>
-        <div style={{ fontWeight:700, marginBottom:8 }}>Log</div>
-        <pre style={{ background:'#0f172a', color:'#e5e7eb', padding:12, borderRadius:8, maxHeight:220, overflow:'auto' }}>
+        {/* Mensagens de Status */}
+        {saveStatus === 'success' && (
+          <div style={{ padding:12, background:'#d4edda', border:'1px solid #c3e6cb', borderRadius:6, color:'#155724', fontSize:14 }}>
+            ✅ Configurações salvas com sucesso!
+          </div>
+        )}
+        
+        {saveStatus === 'error' && (
+          <div style={{ padding:12, background:'#f8d7da', border:'1px solid #f5c6cb', borderRadius:6, color:'#721c24', fontSize:14 }}>
+            ❌ Erro ao salvar configurações
+          </div>
+        )}
+
+        {/* Log */}
+        <div style={{ marginTop:16 }}>
+          <div style={{ fontWeight:600, marginBottom:8, color:'#333' }}>Log de Atividades</div>
+          <pre style={{ 
+            background:'#f8f9fa', 
+            color:'#333', 
+            padding:12, 
+            borderRadius:6, 
+            maxHeight:120, 
+            overflow:'auto', 
+            fontSize:12,
+            border:'1px solid #e9ecef'
+          }}>
 {log.map(l => `• ${l}\n`)}
-        </pre>
-      </section>
+          </pre>
+        </div>
+      </div>
     </div>
   )
-}
-
-function btn(bg:string): React.CSSProperties {
-  return { background:bg, color:'#fff', padding:'8px 14px', borderRadius:8, border:'none', cursor:'pointer', fontWeight:600 }
 }
