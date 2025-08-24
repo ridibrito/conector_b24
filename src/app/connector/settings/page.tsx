@@ -4,13 +4,12 @@ import { useEffect, useRef, useState } from 'react'
 import Image from 'next/image'
 
 export const dynamic = 'force-dynamic'
-export const revalidate = 0
 
 declare global {
   interface Window {
     BX24: {
       init: (cb: () => void) => void
-      callMethod: (m: string, p: Record<string, any>, cb: (r: any) => void) => void
+      callMethod: (m: string, p: Record<string, unknown>, cb: (r: { data?: () => unknown; error?: () => unknown }) => void) => void
       resizeWindow: (w: number, h: number) => void
     }
   }
@@ -51,7 +50,7 @@ export default function SettingsPage() {
           await check(lineId)
           safeResize()
         })
-      } catch (e:any) { push('Falha init BX24: '+e?.message) }
+      } catch (e: unknown) { push('Falha init BX24: '+(e as Error)?.message) }
     }
     s.onerror = () => push('Falha ao carregar SDK BX24 (api/v1)')
     document.head.appendChild(s)
@@ -60,15 +59,18 @@ export default function SettingsPage() {
   function push(m:string){ setLog(p => [m, ...p].slice(0,120)) }
   function safeResize(){ try{ window.BX24?.resizeWindow(document.body.clientWidth, document.body.clientHeight) }catch{} }
 
-  function call(method:string, params:Record<string,any> = {}): Promise<any> {
+  function call(method:string, params:Record<string, unknown> = {}): Promise<unknown> {
     return new Promise((resolve, reject) => {
       if (!window.BX24) return reject(new Error('BX24 indisponível'))
-      window.BX24.callMethod(method, params, (r:any) => {
+      window.BX24.callMethod(method, params, (r: { data?: () => unknown; error?: () => unknown }) => {
         const err = r?.error?.()
         if (err) {
-          const txt = err.ex?.error_description || err.ex?.error || JSON.stringify(err)
+          const errObj = err as Record<string, unknown>
+          const txt = (errObj?.ex as Record<string, unknown>)?.error_description || 
+                      (errObj?.ex as Record<string, unknown>)?.error || 
+                      JSON.stringify(err)
           push(`${method} ERROR: ${txt}`)
-          reject(err.ex || err)
+          reject(errObj?.ex || err)
         } else {
           push(`${method} OK`)
           resolve(r.data?.())
@@ -81,7 +83,10 @@ export default function SettingsPage() {
     try {
       const data = await call('imopenlines.config.list.get', {})
       const arr: Line[] = Array.isArray(data)
-        ? data.map((x:any)=>({ ID:Number(x?.ID ?? x?.id ?? 1), NAME:x?.CONFIG?.LINE_NAME || x?.NAME || `Linha ${x?.ID}` }))
+        ? data.map((x: Record<string, unknown>)=>({ 
+            ID:Number(x?.ID ?? x?.id ?? 1), 
+            NAME:String((x?.CONFIG as Record<string, unknown>)?.LINE_NAME || x?.NAME || `Linha ${x?.ID}`)
+          }))
         : [{ ID:1, NAME:'Linha 1' }]
       setLines(arr.length ? arr : [{ ID:1, NAME:'Linha 1' }])
       setLineId(arr.length ? Number(arr[0].ID) : 1)
@@ -94,8 +99,8 @@ export default function SettingsPage() {
   async function check(line:number) {
     setStatus('unknown')
     try {
-      const d = await call('imconnector.status', { LINE: line, CONNECTOR: CONNECTOR_ID })
-      const ok = !!d?.STATUS && !!d?.CONFIGURED && d?.ERROR === false
+      const d = await call('imconnector.status', { LINE: line, CONNECTOR: CONNECTOR_ID }) as Record<string, unknown>
+      const ok = !!(d?.STATUS) && !!(d?.CONFIGURED) && d?.ERROR === false
       setStatus(ok ? 'connected' : 'disconnected')
     } catch { setStatus('disconnected') }
   }
@@ -123,7 +128,7 @@ export default function SettingsPage() {
       if (r.ok){ const d = await r.json(); setEvo({
         apiKey: d.evolutionToken || '', subjectId: d.subjectId || '', evolutionUrl: d.evolutionUrl || '', webhookUrl: d.webhookUrl || ''
       })}
-    } catch(e:any){ push('Erro ao carregar settings: '+e?.message) }
+    } catch(e: unknown){ push('Erro ao carregar settings: '+(e as Error)?.message) }
   }
   async function saveEvo(){
     setSaving(true); setSaveMsg('idle')
@@ -133,7 +138,7 @@ export default function SettingsPage() {
       })})
       if(!r.ok) throw new Error((await r.json()).error || 'Falha ao salvar')
       setSaveMsg('ok'); push('Configurações salvas'); setTimeout(()=>setSaveMsg('idle'),2500)
-    } catch(e:any){ setSaveMsg('err'); push('Erro ao salvar: '+e?.message) }
+    } catch(e: unknown){ setSaveMsg('err'); push('Erro ao salvar: '+(e as Error)?.message) }
     finally{ setSaving(false) }
   }
 
