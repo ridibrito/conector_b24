@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import Image from 'next/image'
 
 declare global {
   interface Window {
@@ -107,8 +108,8 @@ export default function ConnectorSettings() {
         <div className="bg-white rounded shadow-sm border border-[#e8e8e8] p-4">
           {/* Header */}
           <div className="flex items-center space-x-3 mb-4">
-            <div className="w-10 h-10 bg-[#25D366] rounded-full flex items-center justify-center">
-              <span className="text-white text-sm font-bold">WA</span>
+            <div className="w-10 h-10 bg-white rounded-full flex items-center justify-center border border-[#e8e8e8]">
+              <Image src="/evo_logo.png" alt="Evolution Logo" width={32} height={32} />
             </div>
             <div>
               <h1 className="text-lg font-medium text-[#535c69]">Evolution WhatsApp</h1>

@@ -41,45 +41,48 @@ async function sendToBitrix(params: URLSearchParams) {
   return { ok: resp.ok, status: resp.status, data }
 }
 
-export async function POST(req: NextRequest) {
-  try {
-    const body = await req.json().catch(() => ({}))
-    const from = body.from || body.userId || 'wa-unknown'
-    const chatId = body.chatId || from
-    const text: string | undefined = body.text
-    const mediaUrl: string | undefined = body.mediaUrl
-    const messageId: string = body.messageId || (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}`)
-    const ts: number = Number.isFinite(body.timestamp) ? body.timestamp : Math.floor(Date.now() / 1000)
+        export async function POST(req: NextRequest) {
+          try {
+            const body = await req.json().catch(() => ({}))
+            const from = body.from || body.userId || 'wa-unknown'
+            const chatId = body.chatId || from
+            const text: string | undefined = body.text
+            const mediaUrl: string | undefined = body.mediaUrl
+            const messageId: string = body.messageId || (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}`)
+            const ts: number = Number.isFinite(body.timestamp) ? body.timestamp : Math.floor(Date.now() / 1000)
 
-    const B24_ENDPOINT = process.env.B24_ENDPOINT
-    const B24_LINE_ID = Number(process.env.B24_LINE_ID || '1')
-    const CONNECTOR_SEND_ID = process.env.CONNECTOR_SEND_ID || 'evolution_custom'
-    const clientId = process.env.B24_CLIENT_ID
-    const clientSecret = process.env.B24_CLIENT_SECRET
-    const refreshEnv = process.env.B24_REFRESH_TOKEN
+            // Permite override da LINE via payload
+            const lineFromBody = Number.isFinite(body.lineId) ? Number(body.lineId) : undefined
+            const B24_ENDPOINT = process.env.B24_ENDPOINT
+            const B24_LINE_ID = Number(process.env.B24_LINE_ID || '1')
+            const lineToUse = lineFromBody || B24_LINE_ID
+            const CONNECTOR_SEND_ID = process.env.CONNECTOR_SEND_ID || 'evolution_custom'
+            const clientId = process.env.B24_CLIENT_ID
+            const clientSecret = process.env.B24_CLIENT_SECRET
+            const refreshEnv = process.env.B24_REFRESH_TOKEN
 
-    const missing: string[] = []
-    if (!B24_ENDPOINT) missing.push('B24_ENDPOINT')
-    if (!B24_LINE_ID) missing.push('B24_LINE_ID')
-    if (!CONNECTOR_SEND_ID) missing.push('CONNECTOR_SEND_ID')
-    if (!clientId) missing.push('B24_CLIENT_ID')
-    if (!clientSecret) missing.push('B24_CLIENT_SECRET')
-    if (!refreshEnv && !cachedAuth.refresh_token) missing.push('B24_REFRESH_TOKEN')
-    if (missing.length) return NextResponse.json({ ok: false, error: 'MISSING_ENV', missing }, { status: 500 })
-    if (!text && !mediaUrl) return NextResponse.json({ ok: false, error: 'NO_CONTENT', hint: 'Envie text ou mediaUrl' }, { status: 400 })
+                const missing: string[] = []
+            if (!B24_ENDPOINT) missing.push('B24_ENDPOINT')
+            if (!lineToUse) missing.push('B24_LINE_ID')
+            if (!CONNECTOR_SEND_ID) missing.push('CONNECTOR_SEND_ID')
+            if (!clientId) missing.push('B24_CLIENT_ID')
+            if (!clientSecret) missing.push('B24_CLIENT_SECRET')
+            if (!refreshEnv && !cachedAuth.refresh_token) missing.push('B24_REFRESH_TOKEN')
+            if (missing.length) return NextResponse.json({ ok: false, error: 'MISSING_ENV', missing }, { status: 500 })
+            if (!text && !mediaUrl) return NextResponse.json({ ok: false, error: 'NO_CONTENT', hint: 'Envie text ou mediaUrl' }, { status: 400 })
 
-    if (needRefresh()) await refreshToken()
+            if (needRefresh()) await refreshToken()
 
-    const params = new URLSearchParams()
-    params.set('auth', cachedAuth.access_token!)
-    params.set('CONNECTOR', CONNECTOR_SEND_ID)
-    params.set('LINE', String(B24_LINE_ID))
-    params.set('MESSAGES[0][user][id]', from)
-    params.set('MESSAGES[0][chat][id]', chatId)
-    params.set('MESSAGES[0][message][id]', messageId)
-    params.set('MESSAGES[0][message][date]', String(ts))
-    if (text) params.set('MESSAGES[0][message][text]', text)
-    if (!text && mediaUrl) params.set('MESSAGES[0][message][files][0][url]', mediaUrl)
+            const params = new URLSearchParams()
+            params.set('auth', cachedAuth.access_token!)
+            params.set('CONNECTOR', CONNECTOR_SEND_ID)
+            params.set('LINE', String(lineToUse))
+            params.set('MESSAGES[0][user][id]', from)
+            params.set('MESSAGES[0][chat][id]', chatId)
+            params.set('MESSAGES[0][message][id]', messageId)
+            params.set('MESSAGES[0][message][date]', String(ts))
+            if (text) params.set('MESSAGES[0][message][text]', text)
+            if (!text && mediaUrl) params.set('MESSAGES[0][message][files][0][url]', mediaUrl)
 
     let res = await sendToBitrix(params)
     const expired = (!res.ok && (res.status === 401 || res.data?.error === 'expired_token'))
