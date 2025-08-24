@@ -1,9 +1,8 @@
 'use client'
+export const dynamic = 'force-dynamic'
 
 import { useEffect, useRef, useState } from 'react'
 import Image from 'next/image'
-
-export const dynamic = 'force-dynamic'
 
 declare global {
   interface Window {
@@ -17,14 +16,14 @@ declare global {
 
 const CONNECTOR_ID = 'EVOLUTION_CUSTOM'
 
-type Line = { ID: number; NAME?: string }
+type Line = { ID: number; NAME: string }
 type EvoSettings = { apiKey: string; subjectId: string; evolutionUrl: string; webhookUrl: string }
 
 export default function SettingsPage() {
   const [ready, setReady]   = useState(false)
   const [loading, setLoading] = useState(false)
   const [status, setStatus] = useState<'unknown'|'connected'|'disconnected'>('unknown')
-  const [lines, setLines]   = useState<Line[]>([{ ID: 1, NAME: 'Linha 1' }])
+  const [lines, setLines]   = useState<Line[]>([{ ID: 1, NAME: 'Canal Aberto 1' }])
   const [lineId, setLineId] = useState<number>(1)
   const [log, setLog]       = useState<string[]>([])
   const once = useRef(false)
@@ -81,18 +80,24 @@ export default function SettingsPage() {
 
   async function loadLines() {
     try {
-      const data = await call('imopenlines.config.list.get', {})
-      const arr: Line[] = Array.isArray(data)
-        ? data.map((x: Record<string, unknown>)=>({ 
-            ID:Number(x?.ID ?? x?.id ?? 1), 
-            NAME:String((x?.CONFIG as Record<string, unknown>)?.LINE_NAME || x?.NAME || `Linha ${x?.ID}`)
-          }))
-        : [{ ID:1, NAME:'Linha 1' }]
-      setLines(arr.length ? arr : [{ ID:1, NAME:'Linha 1' }])
-      setLineId(arr.length ? Number(arr[0].ID) : 1)
-      push(`Linhas carregadas: ${arr.length || 1}`)
-    } catch {
-      setLines([{ ID:1, NAME:'Linha 1' }]); setLineId(1)
+      const res = await call('imopenlines.config.list.get', {}) as Record<string, unknown>
+      // normaliza o retorno em lista com ID/NAME
+      const parsed: Line[] = Object
+        .values(res || {})
+        .map((cfg: unknown) => ({ 
+          ID: Number((cfg as Record<string, unknown>).ID), 
+          NAME: String((cfg as Record<string, unknown>).LINE_NAME || `Canal Aberto ${(cfg as Record<string, unknown>).ID}`) 
+        }))
+        .sort((a, b) => a.ID - b.ID)
+      if (parsed.length) {
+        setLines(parsed)
+        const l10 = parsed.find(l => l.ID === 10)
+        setLineId(l10 ? l10.ID : parsed[0].ID)
+      }
+      push(`Linhas carregadas: ${parsed.length || 1}`)
+    } catch (e) {
+      push('Não consegui listar Canais Abertos: ' + (e as Error)?.message)
+      setLines([{ ID:1, NAME:'Canal Aberto 1' }]); setLineId(1)
     }
   }
 
@@ -148,7 +153,7 @@ export default function SettingsPage() {
         <Image src="/evo_logo.png" alt="Evotrix" width={56} height={56} style={logo}/>
         <div>
           <div style={title}>Evotrix</div>
-          <div style={sub}>Conecte o conector a um Canal Aberto e salve suas chaves da Evolution.</div>
+          <div style={sub}>Conecte o Evotrix ao Bitrix24</div>
         </div>
       </header>
 
@@ -156,7 +161,7 @@ export default function SettingsPage() {
         <label style={label}>Canal Aberto</label>
         <div style={{display:'flex', gap:8}}>
           <select value={lineId} onChange={e=>setLineId(Number(e.target.value))} disabled={!ready||loading} style={input}>
-            {lines.map(l=> <option key={l.ID} value={l.ID}>{l.NAME ?? `Linha ${l.ID}`} (ID {l.ID})</option>)}
+            {lines.map(l=> <option key={l.ID} value={l.ID}>{l.NAME} (ID {l.ID})</option>)}
           </select>
           <button onClick={()=>check(lineId)} disabled={!ready||loading} style={btn('#0ea5e9')}>Ver status</button>
         </div>
