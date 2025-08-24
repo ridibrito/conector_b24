@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 
 interface LogEntry {
@@ -18,54 +18,27 @@ export default function LogsPage() {
   const [sourceFilter, setSourceFilter] = useState<'all' | 'evolution' | 'bitrix24' | 'system'>('all')
   const [isLoading, setIsLoading] = useState(true)
 
-  useEffect(() => {
-    // Simular carregamento de logs
-    setTimeout(() => {
-      setLogs([
-        {
-          id: '1',
-          timestamp: '2024-01-15 14:30:25',
-          level: 'success',
-          message: 'Mensagem enviada com sucesso',
-          source: 'evolution',
-          details: 'Para: +55 11 99999-9999 | Status: delivered'
-        },
-        {
-          id: '2',
-          timestamp: '2024-01-15 14:28:10',
-          level: 'info',
-          message: 'Mensagem recebida do WhatsApp',
-          source: 'evolution',
-          details: 'De: +55 11 99999-9999 | Tipo: text'
-        },
-        {
-          id: '3',
-          timestamp: '2024-01-15 14:25:45',
-          level: 'warning',
-          message: 'Tentativa de reconexão com Evolution API',
-          source: 'system',
-          details: 'Timeout na conexão | Tentativa 1/3'
-        },
-        {
-          id: '4',
-          timestamp: '2024-01-15 14:20:15',
-          level: 'error',
-          message: 'Falha ao enviar mensagem',
-          source: 'evolution',
-          details: 'Erro: Invalid phone number format'
-        },
-        {
-          id: '5',
-          timestamp: '2024-01-15 14:15:30',
-          level: 'success',
-          message: 'Webhook processado com sucesso',
-          source: 'bitrix24',
-          details: 'Evento: OnImConnectorMessageAdd'
-        }
-      ])
+  const loadLogs = useCallback(async () => {
+    try {
+      const params = new URLSearchParams()
+      if (filter !== 'all') params.append('level', filter)
+      if (sourceFilter !== 'all') params.append('source', sourceFilter)
+      
+      const response = await fetch(`/api/logs?${params.toString()}`)
+      if (response.ok) {
+        const data = await response.json()
+        setLogs(data)
+      }
+    } catch (error) {
+      console.error('Erro ao carregar logs:', error)
+    } finally {
       setIsLoading(false)
-    }, 1000)
-  }, [])
+    }
+  }, [filter, sourceFilter])
+
+  useEffect(() => {
+    loadLogs()
+  }, [loadLogs])
 
   const getLevelColor = (level: LogEntry['level']) => {
     switch (level) {

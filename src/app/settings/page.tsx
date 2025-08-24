@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
 
 interface Settings {
@@ -14,9 +14,9 @@ interface Settings {
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState<Settings>({
-    evolutionUrl: 'https://sua-evolution:port',
-    evolutionToken: 'seu_token_aqui',
-    webhookUrl: 'https://seu-projeto.vercel.app/api/wa/webhook-in',
+    evolutionUrl: '',
+    evolutionToken: '',
+    webhookUrl: '',
     autoReconnect: true,
     logLevel: 'info',
     maxRetries: 3
@@ -24,19 +24,47 @@ export default function SettingsPage() {
 
   const [isSaving, setIsSaving] = useState(false)
   const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'error'>('idle')
+  const [isLoading, setIsLoading] = useState(false)
+
+  // Carregar configurações ao montar o componente
+  useEffect(() => {
+    loadSettings()
+  }, [])
+
+  const loadSettings = async () => {
+    try {
+      const response = await fetch('/api/settings')
+      if (response.ok) {
+        const data = await response.json()
+        setSettings(data)
+      }
+    } catch (error) {
+      console.error('Erro ao carregar configurações:', error)
+    } finally {
+      setIsLoading(false)
+    }
+  }
 
   const handleSave = async () => {
     setIsSaving(true)
     setSaveStatus('idle')
     
     try {
-      // Simular salvamento
-      await new Promise(resolve => setTimeout(resolve, 1000))
-      setSaveStatus('success')
-      
-      // Reset status após 3 segundos
-      setTimeout(() => setSaveStatus('idle'), 3000)
-    } catch {
+      const response = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(settings)
+      })
+
+      if (response.ok) {
+        setSaveStatus('success')
+        setTimeout(() => setSaveStatus('idle'), 3000)
+      } else {
+        const error = await response.json()
+        throw new Error(error.error || 'Erro ao salvar')
+      }
+    } catch (error) {
+      console.error('Erro ao salvar:', error)
       setSaveStatus('error')
     } finally {
       setIsSaving(false)
@@ -44,8 +72,22 @@ export default function SettingsPage() {
   }
 
   const handleTestConnection = async () => {
-    // Simular teste de conexão
-    alert('Teste de conexão iniciado...')
+    try {
+      const response = await fetch('/api/test-connection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      })
+
+      const result = await response.json()
+      
+      if (result.success) {
+        alert(`✅ ${result.message}`)
+      } else {
+        alert(`❌ ${result.error}`)
+      }
+    } catch (error) {
+      alert('❌ Erro ao testar conexão')
+    }
   }
 
   return (

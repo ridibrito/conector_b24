@@ -28,17 +28,22 @@ export default function Dashboard() {
   const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
-    // Simular carregamento de dados
-    setTimeout(() => {
-      setStats({
-        total: 1247,
-        today: 23,
-        pending: 8,
-        resolved: 15
-      })
-      setIsLoading(false)
-    }, 1000)
+    loadStats()
   }, [])
+
+  const loadStats = async () => {
+    try {
+      const response = await fetch('/api/stats')
+      if (response.ok) {
+        const data = await response.json()
+        setStats(data)
+      }
+    } catch (error) {
+      console.error('Erro ao carregar estatísticas:', error)
+    } finally {
+      setIsLoading(false)
+    }
+  }
 
   const statusCards: StatusCard[] = [
     {

@@ -35,17 +35,19 @@ export async function POST(req: NextRequest) {
     }
 
     // Envia para Evolution API
+    const evolution = new Evolution();
+    
     if (files && files.length > 0) {
       // Envia arquivos
       for (const f of files) {
         const url = String(f.url || f.URL || '');
         if (url) {
-          await Evolution.sendMedia(phone, url);
+          await evolution.sendMedia(phone, url);
         }
       }
     } else {
       // Envia texto
-      await Evolution.sendText(phone, text);
+      await evolution.sendText(phone, text);
     }
 
     // Confirma entrega no Bitrix24
