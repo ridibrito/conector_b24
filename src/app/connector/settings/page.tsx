@@ -73,8 +73,8 @@ export default function ConnectorSettings() {
         } catch {}
         try {
           window.BX24.callMethod('app.info', {}, (res: { data?: () => unknown; answer?: { result: unknown } }) => {
-                          const r = (res?.data?.() || res?.answer?.result) as Record<string, unknown>
-              setInstalled(Boolean(r?.INSTALLED))
+            const r = (res?.data?.() || res?.answer?.result) as Record<string, unknown>
+            setInstalled(Boolean(r?.INSTALLED))
           })
         } catch {}
       })
