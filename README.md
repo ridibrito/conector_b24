@@ -69,8 +69,9 @@ vercel --prod
 1. No portal Bitrix24: **Aplicativos** → **Recursos de desenvolvedor** → **Outros** → **Aplicativo local**
 2. Configure:
    - **Installation callback URL**: `https://SEU_DOMINIO/api/b24/callback`
+   - **Installation wizard URL** (opcional): `https://SEU_DOMINIO/api/b24/install`
    - **Escopos**: `imconnector`, `imopenlines`
-3. Instale o app
+3. Instale o app - você verá uma página de instalação amigável
 
 ### 6. Setup do Conector
 
