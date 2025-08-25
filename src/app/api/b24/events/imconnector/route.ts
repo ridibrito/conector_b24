@@ -1,76 +1,89 @@
-// src/app/api/b24/events/imconnector/route.ts
-import { NextRequest, NextResponse } from "next/server";
-import { Evolution } from "@/lib/evolution";
-import { Bitrix } from "@/lib/bitrix";
-import { BitrixPayload } from "@/lib/types";
+import { NextRequest, NextResponse } from 'next/server'
+
+const CONNECTOR = (process.env.CONNECTOR_SEND_ID || 'evolution_custom').toLowerCase()
+const SEND_STYLE = (process.env.EVOLUTION_SEND_STYLE || 'remoteJid').toLowerCase()
+const SEND_PATH  = process.env.EVOLUTION_SEND_PATH || '/messages/sendText'
+
+function extractText(msg: any): string | null {
+  if (!msg) return null
+  return msg.text ?? msg.MESSAGE ?? msg.message ?? msg.body ?? null
+}
+
+function extractRemoteJid(payload: any): string | null {
+  const userId: string | undefined =
+    payload?.USER?.ID ?? payload?.user?.id ?? payload?.USER_ID ?? payload?.user_id
+  const chatId: string | undefined =
+    payload?.CHAT?.ID ?? payload?.chat?.id
+  const raw = String(userId || chatId || '')
+  if (!raw) return null
+  const digits = raw.replace(/\D+/g, '')
+  if (!digits) return null
+  return `${digits}@s.whatsapp.net`
+}
+
+function buildBody(jid: string, text: string) {
+  const digits = jid.replace(/\D+/g, '')
+  const plusE164 = digits.startsWith('+') ? digits : `+${digits}`
+  switch (SEND_STYLE) {
+    case 'number':  return { number: digits, text }
+    case 'toe164':  return { to: plusE164, text }
+    case 'jid':     return { jid, message: text }
+    default:        return { remoteJid: jid, text }
+  }
+}
+
+async function sendToEvolution(remoteJid: string, text: string) {
+  const base = process.env.EVOLUTION_URL || ''
+  if (!base) throw new Error('EVOLUTION_URL ausente')
+  const url = base.replace(/\/$/, '') + SEND_PATH
+
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (process.env.EVOLUTION_TOKEN) headers.Authorization = `Bearer ${process.env.EVOLUTION_TOKEN}`
+
+  const bodyObj = buildBody(remoteJid, text)
+  const body = JSON.stringify(bodyObj)
+
+  const r = await fetch(url, { method: 'POST', headers, body })
+  const txt = await r.text()
+  let parsed: any = null
+  try { parsed = JSON.parse(txt) } catch { parsed = { raw: txt } }
+
+  if (!r.ok) {
+    throw new Error(`Evolution send falhou: ${r.status} ${JSON.stringify(parsed)}`)
+  }
+  return parsed
+}
 
 export async function POST(req: NextRequest) {
-  const ct = req.headers.get("content-type") || "";
-  let body: Record<string, unknown> = {};
-  if (ct.includes("application/json")) body = await req.json();
-  else body = Object.fromEntries(new URLSearchParams(await req.text()));
-  
-  console.log("[B24 EVENT imconnector]", body);
-  
-  const payload = body as BitrixPayload;
-  const auth = payload.auth || payload.AUTH;
-  const client_endpoint = auth?.client_endpoint as string;
-  
-  if (!client_endpoint) {
-    console.error("[B24 EVENT] Sem client_endpoint");
-    return NextResponse.json({ ok: false }, { status: 400 });
+  let body: any = null
+  try { body = await req.json() } catch { body = {} }
+
+  const event = String(body?.event || body?.EVENT || '')
+  const data  = body?.data || body?.DATA || {}
+
+  const connector = String(data?.CONNECTOR || '').toLowerCase()
+  if (!connector || connector !== CONNECTOR) {
+    return NextResponse.json({ ok: true, skipped: 'connector_mismatch' })
+  }
+  if (!/OnImConnectorMessageAdd/i.test(event)) {
+    return NextResponse.json({ ok: true, skipped: 'event_ignored', event })
+  }
+
+  const text = extractText(data?.MESSAGE)
+  const remoteJid = extractRemoteJid(data)
+  if (!text || !remoteJid) {
+    return NextResponse.json({ ok: false, error: 'MISSING_FIELDS', have: { text: !!text, remoteJid: !!remoteJid } }, { status: 200 })
   }
 
   try {
-    const data = payload.data?.FIELDS as Record<string, unknown>;
-    const message = data?.MESSAGE as Record<string, unknown>;
-    const user = message?.user as Record<string, unknown>;
-    const text = message?.text as string;
-    const phone = user?.id as string;
-    const files = data?.FILES as Array<Record<string, unknown>>;
-
-    if (!phone || !text) {
-      console.error("[B24 EVENT] Sem phone ou text");
-      return NextResponse.json({ ok: false }, { status: 400 });
-    }
-
-    // Envia para Evolution API
-    const evolution = new Evolution();
-    
-    if (files && files.length > 0) {
-      // Envia arquivos
-      for (const f of files) {
-        const url = String(f.url || f.URL || '');
-        if (url) {
-          await evolution.sendMedia(phone, url);
-        }
-      }
-    } else {
-      // Envia texto
-      await evolution.sendText(phone, text);
-    }
-
-    // Confirma entrega no Bitrix24
-    const b24 = await Bitrix.forPortal(client_endpoint);
-    await b24.confirmDelivery({
-      CONNECTOR: "evolution_custom",
-      USER: { id: phone },
-      CHAT: { id: phone },
-      MESSAGE: { id: message?.id as string }
-    });
-
-    // Confirma leitura
-    await b24.confirmReading({
-      CONNECTOR: "evolution_custom", 
-      USER: { id: phone },
-      CHAT: { id: phone },
-      MESSAGE: { id: message?.id as string }
-    });
-
-    return NextResponse.json({ ok: true });
-
-  } catch (e: unknown) {
-    console.error("[B24 EVENT] Erro:", e instanceof Error ? e.message : 'Erro desconhecido');
-    return NextResponse.json({ ok: false }, { status: 500 });
+    const evo = await sendToEvolution(remoteJid, text)
+    return NextResponse.json({ ok: true, sent: { remoteJid, text, style: SEND_STYLE, path: SEND_PATH }, evo })
+  } catch (e: any) {
+    return NextResponse.json({ ok: false, error: 'EVOLUTION_SEND_ERROR', detail: e?.message ?? String(e) }, { status: 502 })
   }
 }
+
+export async function GET() {
+  return NextResponse.json({ ok: true, handler: 'b24/events/imconnector', style: SEND_STYLE, path: SEND_PATH })
+}
+
