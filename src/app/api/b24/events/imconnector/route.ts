@@ -5,22 +5,26 @@ export const dynamic = 'force-dynamic'
 
 const CONNECTOR = (process.env.CONNECTOR_SEND_ID || 'evolution_custom').toLowerCase()
 
-function ok(data: any, status = 200) {
+function ok(data: Record<string, unknown>, status = 200) {
   return NextResponse.json(data, { status })
 }
 
 /** tenta pegar texto de diferentes formatos do Bitrix */
-function extractText(msg: any): string | null {
+function extractText(msg: Record<string, unknown> | null): string | null {
   if (!msg) return null
-  return msg.text ?? msg.MESSAGE ?? msg.message ?? msg.body ?? null
+  return (msg.text ?? msg.MESSAGE ?? msg.message ?? msg.body ?? null) as string | null
 }
 
 /** converte user/chat "wa-5511..." -> "5511...@s.whatsapp.net" */
-function extractRemoteJid(payload: any): string | null {
+function extractRemoteJid(payload: Record<string, unknown>): string | null {
   const userId: string | undefined =
-    payload?.USER?.ID ?? payload?.user?.id ?? payload?.USER_ID ?? payload?.user_id
+    (payload?.USER as Record<string, unknown>)?.ID as string | undefined ??
+    (payload?.user as Record<string, unknown>)?.id as string | undefined ??
+    payload?.USER_ID as string | undefined ??
+    payload?.user_id as string | undefined
   const chatId: string | undefined =
-    payload?.CHAT?.ID ?? payload?.chat?.id
+    (payload?.CHAT as Record<string, unknown>)?.ID as string | undefined ??
+    (payload?.chat as Record<string, unknown>)?.id as string | undefined
 
   const raw = String(userId || chatId || '')
   const digits = raw.replace(/\D+/g, '')
@@ -57,13 +61,13 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  let body: any = null
+  let body: Record<string, unknown> | null = null
   try { body = await req.json() } catch { return ok({ ok:false, error:'INVALID_JSON' }, 200) }
 
   const event = String(body?.event || body?.EVENT || '')
   const data  = body?.data || body?.DATA || {}
 
-  const connector = String(data?.CONNECTOR || '').toLowerCase()
+  const connector = String((data as Record<string, unknown>)?.CONNECTOR || '').toLowerCase()
   if (connector !== CONNECTOR) {
     return ok({ ok:true, skipped:'connector_mismatch', expected: CONNECTOR, got: connector })
   }
@@ -72,8 +76,8 @@ export async function POST(req: NextRequest) {
     return ok({ ok:true, skipped:'event_ignored', event })
   }
 
-  const text = extractText(data?.MESSAGE)
-  const remoteJid = extractRemoteJid(data)
+  const text = extractText((data as Record<string, unknown>)?.MESSAGE as Record<string, unknown> | null)
+  const remoteJid = extractRemoteJid(data as Record<string, unknown>)
   if (!text || !remoteJid) {
     return ok({ ok:false, error:'MISSING_FIELDS', have:{ text:!!text, remoteJid:!!remoteJid } }, 200)
   }
